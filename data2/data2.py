@@ -20,37 +20,55 @@ def get_txtlist(wallet_address, local_start_date, local_end_date):
   url = f"https://www.bkcscan.com/api?module=account&action=txlist&address={wallet_address}&starttimestamp={start_timestamp}&endtimestamp={end_timestamp}"
   req = requests.get(url)
   txts = req.json()["result"]
-  impt_keys = ["from", "to", "hash", "timeStamp", "value", "gasUsed", "gasPrice"]
   new_txts = []
+  #this is to remove duplicate transfer fees of the same txtHash
+  gas_mem = set()
   for txt in txts:
-    new_txt = {k:v for (k,v) in txt.items() if k in impt_keys}
     parsed_txt = {
-      "type" : "TRANSFER_OUT" if new_txt["from"] == wallet_address.lower() else "TRANSFER_IN",
-      "txHash" : new_txt["hash"],
-      "datetime" : timestamp_to_zulu(int(new_txt["timeStamp"])).strftime('%Y-%m-%dT%H:%M:%SZ'),
-      "contactIdentity" : [id for id in [new_txt["from"], new_txt["to"]] if id != wallet_address.lower()][0],
+      "type" : "TRANSFER_OUT" if txt["from"] == wallet_address.lower() else "TRANSFER_IN",
+      "txHash" : txt["hash"],
+      "datetime" : timestamp_to_zulu(int(txt["timeStamp"])).strftime('%Y-%m-%dT%H:%M:%SZ'),
+      "contactIdentity" : [id for id in [txt["from"], txt["to"]] if id != wallet_address.lower()][0],
       "currency" : "KUB",
-      "amount" : float(new_txt["value"])/(float(1e18))
+      "amount" : float(txt["value"])/(float(1e18))
     }
     gas_txt = {
       "type" : "TRANSFER_FEE",
-      "txHash" : new_txt["hash"],
+      "txHash" : txt["hash"],
       "contactIdentity" : parsed_txt["contactIdentity"],
       "currency" : "KUB",
-      "amount" : (float(new_txt["gasUsed"])*float(new_txt["gasPrice"])) /(float(1e18)) 
+      "amount" : (float(txt["gasUsed"])*float(txt["gasPrice"])) /(float(1e18)) 
     }
     new_txts.append(parsed_txt)
-    new_txts.append(gas_txt)
-  print(new_txts[1])
+    if txt["hash"] not in gas_mem:
+      new_txts.append(gas_txt)
+      gas_mem.add(txt["hash"])
 
-print(local_to_epoch("2023/01/09"))
-print(timestamp_to_zulu(local_to_epoch("2023/01/09")))
-
-print("____")
-def timestamp_to_local(timestamp: int) -> datetime:
-  #convert timestamp to zulu time
-  return datetime.fromtimestamp(timestamp)
-print(timestamp_to_local(1622316593))
-print(timestamp_to_local(1622395266))
-get_txtlist("0x5Cf6c83A471ECd030A67C6C1AFdD530bCD08e32D", "2021/05/30", "2021/05/31")
+  url = f"https://www.bkcscan.com/api?module=account&action=tokentx&address={wallet_address}"
+  req = requests.get(url)
+  tokentxts = req.json()["result"]
+  tokentxts = [tokentxt for tokentxt in tokentxts if  start_timestamp <= int(tokentxt["timeStamp"]) <= end_timestamp]
+  for tokentxt in tokentxts:
+    parsed_txt = {
+      "type" : "TRANSFER_OUT" if tokentxt["from"] == wallet_address.lower() else "TRANSFER_IN",
+      "txHash" : tokentxt["hash"],
+      "datetime" : timestamp_to_zulu(int(tokentxt["timeStamp"])).strftime('%Y-%m-%dT%H:%M:%SZ'),
+      "contactIdentity" : [id for id in [tokentxt["from"], tokentxt["to"]] if id != wallet_address.lower()][0],
+      "currency" : tokentxt["tokenSymbol"],
+      "amount" : 1 if "value" not in tokentxt else float(tokentxt["value"]) / (1*(10**int(tokentxt["tokenDecimal"]))) #LPT tokens only have 1 amount
+    }
+    gas_txt = {
+      "type" : "TRANSFER_FEE",
+      "txHash" : tokentxt["hash"],
+      "contactIdentity" : parsed_txt["contactIdentity"],
+      "currency" : "KUB",
+      "amount" : (float(tokentxt["gasUsed"])*float(tokentxt["gasPrice"])) /(float(1e18))  
+    }
+    
+    new_txts.append(parsed_txt)
+    if tokentxt["hash"] not in gas_mem: 
+      new_txts.append(gas_txt)
+      gas_mem.add(tokentxt["hash"])
+  return new_txts
+print(get_txtlist("0x5Cf6c83A471ECd030A67C6C1AFdD530bCD08e32D", "2021/05/30", "2021/05/31"))
 
